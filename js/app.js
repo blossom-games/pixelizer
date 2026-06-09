@@ -10,38 +10,43 @@
   let undoStack = [];
   let redoStack = [];
   let pixelizedResult = null;
+  let lastDrawPos = null;
+  let isShiftDown = false;
 
-  /* ---- Init ---- */
+  const MAX_UNDO = 100;
+
+  /* ══════════ INIT ══════════ */
   function init() {
     Engine.init(document.getElementById('pixelCanvas'));
 
-    // Build palette
     const paletteContainer = document.getElementById('palette');
     UI.renderPalette(paletteContainer, Tools.getColor(), selectColor);
 
-    // Wire up UI
     UI.initModeSwitch(switchMode);
     UI.initTools(switchTool);
     UI.initImageUpload(handleImageUpload);
 
-    // Canvas events
     const canvas = document.getElementById('pixelCanvas');
-    canvas.addEventListener('mousedown', onMouseDown);
-    canvas.addEventListener('mousemove', onMouseMove);
-    canvas.addEventListener('mouseup', onMouseUp);
-    canvas.addEventListener('mouseleave', onMouseUp);
-    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    // Touch
+    // Mouse events
+    canvas.addEventListener('mousedown', onPointerDown);
+    canvas.addEventListener('mousemove', onPointerMove);
+    canvas.addEventListener('mouseup', onPointerUp);
+    canvas.addEventListener('mouseleave', onPointerUp);
+    canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+    // Touch events
     canvas.addEventListener('touchstart', onTouchStart, { passive: false });
     canvas.addEventListener('touchmove', onTouchMove, { passive: false });
-    canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+    canvas.addEventListener('touchend', onPointerUp, { passive: false });
+
+    // Scroll wheel zoom
+    const vp = document.getElementById('canvasViewport');
+    vp.addEventListener('wheel', onScrollZoom, { passive: false });
 
     // Color picker
-    document.getElementById('customColor').addEventListener('input', (e) => {
-      selectColor(e.target.value);
-    });
-    document.getElementById('colorHex').addEventListener('input', (e) => {
+    document.getElementById('customColor').addEventListener('input', e => selectColor(e.target.value));
+    document.getElementById('colorHex').addEventListener('input', e => {
       const v = e.target.value.trim();
       if (/^#[0-9a-f]{6}$/i.test(v)) selectColor(v);
     });
@@ -58,6 +63,7 @@
       Engine.resize(w, h);
       updateInfo();
       UI.toast(`Canvas: ${w} x ${h}`);
+      autosaveDirty();
     });
 
     // Clear
@@ -66,6 +72,7 @@
       Engine.fillAll('#ffffff');
       Engine.render();
       UI.toast('Canvas cleared');
+      autosaveDirty();
     });
 
     // Grid toggle
@@ -91,6 +98,14 @@
       updateInfo();
     });
 
+    // Fit zoom button (double-click zoom label)
+    document.getElementById('zoomDisplay').addEventListener('dblclick', () => {
+      const z = Engine.resetZoom();
+      zoomSlider.value = z;
+      updateInfo();
+      UI.toast(`Zoom: ${z}%`);
+    });
+
     // Fullscreen
     document.getElementById('fullscreenBtn').addEventListener('click', () => {
       if (!document.fullscreenElement) {
@@ -101,17 +116,24 @@
     });
 
     // Pixelize controls
-    document.getElementById('blockSize').addEventListener('input', (e) => {
+    document.getElementById('blockSize').addEventListener('input', e => {
       document.getElementById('blockSizeDisplay').textContent = e.target.value;
     });
-    document.getElementById('paletteColors').addEventListener('input', (e) => {
+    document.getElementById('paletteColors').addEventListener('input', e => {
       document.getElementById('paletteDisplay').textContent = e.target.value;
     });
     document.getElementById('applyPixelize').addEventListener('click', applyPixelize);
     document.getElementById('exportPixelizeBtn').addEventListener('click', exportPixelized);
 
+    // Brush size
+    document.getElementById('brushSize').addEventListener('input', e => {
+      Tools.setBrushSize(parseInt(e.target.value));
+      document.getElementById('brushSizeDisplay').textContent = e.target.value;
+    });
+
     // Keyboard shortcuts
     document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', e => { if (e.key === 'Shift') isShiftDown = false; });
 
     // Initial render
     Engine.fillAll('#ffffff');
@@ -119,7 +141,7 @@
     updateInfo();
   }
 
-  /* ---- Mode switching ---- */
+  /* ══════════ MODE ══════════ */
   function switchMode(mode) {
     currentMode = mode;
     document.getElementById('drawTools').classList.toggle('hidden', mode !== 'draw');
@@ -127,11 +149,11 @@
     document.getElementById('drawControls').classList.toggle('hidden', mode !== 'draw');
     document.getElementById('pixelizeControls').classList.toggle('hidden', mode !== 'pixelize');
     document.getElementById('canvasSizeSection').style.display = (mode !== 'draw') ? 'none' : '';
+    document.getElementById('brushSection').style.display = (mode !== 'draw') ? 'none' : '';
 
     if (mode === 'pixelize') {
       if (pixelizedResult) showPixelizedPreview();
-    } else if (mode === 'draw') {
-      // Restore the draw canvas dimensions
+    } else {
       const canvas = document.getElementById('pixelCanvas');
       const w = Engine.getWidth(), h = Engine.getHeight();
       const zoom = Engine.getZoom();
@@ -142,69 +164,116 @@
     }
   }
 
-  /* ---- Tool switching ---- */
+  /* ══════════ TOOLS ══════════ */
   function switchTool(tool) {
     Tools.setTool(tool);
-    document.getElementById('toolDisplay').textContent = tool.charAt(0).toUpperCase() + tool.slice(1);
+    document.getElementById('toolDisplay').textContent = labelForTool(tool);
 
-    // Toggle symmetry modes
     if (tool === 'symmetry-v') {
       Tools.setSymmetryV(!Tools.getSymmetryV());
-      UI.toast(Tools.getSymmetryV() ? 'Symmetry V: ON' : 'Symmetry V: OFF');
+      UI.toast(Tools.getSymmetryV() ? 'Symmetry V ON' : 'Symmetry V OFF');
       UI.setToolActive(Tools.getSymmetryV() ? 'symmetry-v' : 'pencil');
       Tools.setTool('pencil');
       document.getElementById('toolDisplay').textContent = 'Pencil';
     } else if (tool === 'symmetry-h') {
       Tools.setSymmetryH(!Tools.getSymmetryH());
-      UI.toast(Tools.getSymmetryH() ? 'Symmetry H: ON' : 'Symmetry H: OFF');
+      UI.toast(Tools.getSymmetryH() ? 'Symmetry H ON' : 'Symmetry H OFF');
       UI.setToolActive(Tools.getSymmetryH() ? 'symmetry-h' : 'pencil');
       Tools.setTool('pencil');
       document.getElementById('toolDisplay').textContent = 'Pencil';
     } else if (tool === 'mirror') {
       Tools.setMirror(!Tools.getMirror());
-      UI.toast(Tools.getMirror() ? 'Mirror: ON' : 'Mirror: OFF');
+      UI.toast(Tools.getMirror() ? 'Mirror ON' : 'Mirror OFF');
       UI.setToolActive(Tools.getMirror() ? 'mirror' : 'pencil');
       Tools.setTool('pencil');
       document.getElementById('toolDisplay').textContent = 'Pencil';
+    } else if (tool === 'line' || tool === 'rect' || tool === 'circle') {
+      // These tools need a start point — will be handled in pointer events
+      Tools.setLineStart(null);
     }
   }
 
-  /* ---- Color ---- */
+  function labelForTool(t) {
+    const map = {
+      pencil: 'Pencil', fill: 'Fill', eraser: 'Eraser',
+      eyedropper: 'Dropper', line: 'Line', rect: 'Rect', circle: 'Circle',
+      'symmetry-v': 'Sym-V', 'symmetry-h': 'Sym-H', mirror: 'Mirror',
+    };
+    return map[t] || t.charAt(0).toUpperCase() + t.slice(1);
+  }
+
+  /* ══════════ COLOR ══════════ */
   function selectColor(color) {
     Tools.setColor(color);
     document.getElementById('customColor').value = color;
     document.getElementById('colorHex').value = color;
     UI.updatePaletteActive(color);
+    UI.addColorToHistory(color);
   }
 
-  /* ---- Drawing ---- */
-  function onMouseDown(e) {
+  /* ══════════ POINTER EVENTS ══════════ */
+  function onPointerDown(e) {
     if (currentMode !== 'draw') return;
+    const pos = Engine.canvasToPixel(e.clientX, e.clientY);
+    const tool = Tools.getTool();
+
+    // For shape tools, first click sets start
+    if ((tool === 'line' || tool === 'rect' || tool === 'circle') && !e.shiftKey && !isShiftDown) {
+      if (!Tools.getLineStart()) {
+        Tools.setLineStart(pos);
+        UI.toast('Click endpoint');
+        return;
+      }
+    }
+
     saveUndo();
     isDrawing = true;
+    lastDrawPos = pos;
+    applyDrawTool(pos.x, pos.y, pos.x, pos.y);
+  }
+
+  function onPointerMove(e) {
+    if (currentMode !== 'draw') return;
     const pos = Engine.canvasToPixel(e.clientX, e.clientY);
-    applyDrawTool(pos.x, pos.y);
+    const tool = Tools.getTool();
+
+    // Shape preview on hover when waiting for endpoint
+    if ((tool === 'line' || tool === 'rect' || tool === 'circle') && Tools.getLineStart() && !isDrawing) {
+      previewShape(pos);
+      return;
+    }
+
+    if (isDrawing) {
+      applyDrawTool(pos.x, pos.y, lastDrawPos.x, lastDrawPos.y);
+      lastDrawPos = pos;
+    }
   }
 
-  function onMouseMove(e) {
-    if (!isDrawing || currentMode !== 'draw') return;
-    const pos = Engine.canvasToPixel(e.clientX, e.clientY);
-    applyDrawTool(pos.x, pos.y);
+  function onPointerUp() {
+    if (isDrawing) {
+      isDrawing = false;
+      autosaveDirty();
+    }
+    // Shape tools: keep lineStart until next click completes it
   }
 
-  function onMouseUp() {
-    isDrawing = false;
-  }
-
-  /* ---- Touch ---- */
+  /* ══════════ TOUCH ══════════ */
   function onTouchStart(e) {
     e.preventDefault();
     if (currentMode !== 'draw') return;
     const t = e.touches[0];
+    const pos = Engine.canvasToPixel(t.clientX, t.clientY);
+    const tool = Tools.getTool();
+
+    if ((tool === 'line' || tool === 'rect' || tool === 'circle') && !Tools.getLineStart()) {
+      Tools.setLineStart(pos);
+      return;
+    }
+
     saveUndo();
     isDrawing = true;
-    const pos = Engine.canvasToPixel(t.clientX, t.clientY);
-    applyDrawTool(pos.x, pos.y);
+    lastDrawPos = pos;
+    applyDrawTool(pos.x, pos.y, pos.x, pos.y);
   }
 
   function onTouchMove(e) {
@@ -212,36 +281,92 @@
     if (!isDrawing || currentMode !== 'draw') return;
     const t = e.touches[0];
     const pos = Engine.canvasToPixel(t.clientX, t.clientY);
-    applyDrawTool(pos.x, pos.y);
+    applyDrawTool(pos.x, pos.y, lastDrawPos.x, lastDrawPos.y);
+    lastDrawPos = pos;
   }
 
-  function onTouchEnd() {
-    isDrawing = false;
+  /* ══════════ SCROLL ZOOM ══════════ */
+  function onScrollZoom(e) {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -100 : 100;
+    const z = Math.max(100, Math.min(3200, Engine.getZoom() + delta));
+    Engine.zoomAtPoint(z, e.clientX, e.clientY);
+    document.getElementById('zoomSlider').value = z;
+    updateInfo();
   }
 
-  function applyDrawTool(x, y) {
+  /* ══════════ SHAPE PREVIEW ══════════ */
+  let previewDirty = false;
+
+  function previewShape(pos) {
+    // Quick inline preview — just mark dirty and let next render cycle draw
+    if (!previewDirty) {
+      previewDirty = true;
+      requestAnimationFrame(() => { previewDirty = false; });
+    }
+  }
+
+  /* ══════════ DRAW TOOL DISPATCH ══════════ */
+  function applyDrawTool(x, y, prevX, prevY) {
     const grid = Engine.getGrid();
     const w = Engine.getWidth();
     const h = Engine.getHeight();
     const tool = Tools.getTool();
     const color = Tools.getColor();
-
     let changed = false;
 
-    if (tool === 'pencil') {
-      const changes = Tools.pencil(grid, x, y, color, w, h);
-      changed = changes.length > 0;
-    } else if (tool === 'eraser') {
-      const changes = Tools.erase(grid, x, y, w, h);
-      changed = changes.length > 0;
-    } else if (tool === 'fill') {
-      saveUndo();
-      const changes = Tools.floodFill(grid, x, y, color, w, h);
-      changed = changes.length > 0;
-    } else if (tool === 'eyedropper') {
-      const c = Tools.eyedropper(grid, x, y);
-      if (c) selectColor(c);
-      return;
+    switch (tool) {
+      case 'pencil': {
+        const changes = Tools.pencil(grid, x, y, color, w, h);
+        changed = changes.length > 0;
+        break;
+      }
+      case 'eraser': {
+        const changes = Tools.erase(grid, x, y, w, h);
+        changed = changes.length > 0;
+        break;
+      }
+      case 'fill': {
+        const changes = Tools.floodFill(grid, x, y, color, w, h);
+        changed = changes.length > 0;
+        break;
+      }
+      case 'eyedropper': {
+        const c = Tools.eyedropper(grid, x, y);
+        if (c) selectColor(c);
+        return;
+      }
+      case 'line': {
+        const start = Tools.getLineStart();
+        if (start) {
+          const changes = Tools.line(grid, start.x, start.y, x, y, color, w, h);
+          changed = changes.length > 0;
+          Tools.setLineStart(null);
+        }
+        break;
+      }
+      case 'rect': {
+        const start = Tools.getLineStart();
+        if (start) {
+          const fill = isShiftDown;
+          const changes = Tools.rect(grid, start.x, start.y, x, y, color, w, h, fill);
+          changed = changes.length > 0;
+          Tools.setLineStart(null);
+        }
+        break;
+      }
+      case 'circle': {
+        const start = Tools.getLineStart();
+        if (start) {
+          const rx = Math.abs(x - start.x), ry = Math.abs(y - start.y);
+          const fill = isShiftDown;
+          const changes = Tools.circle(grid, start.x, start.y, rx || 1, ry || 1, color, w, h, fill);
+          changed = changes.length > 0;
+          Tools.setLineStart(null);
+        }
+        break;
+      }
     }
 
     if (changed) {
@@ -250,10 +375,10 @@
     }
   }
 
-  /* ---- Undo / Redo ---- */
+  /* ══════════ UNDO / REDO ══════════ */
   function saveUndo() {
     undoStack.push(Engine.getGridCopy());
-    if (undoStack.length > 50) undoStack.shift();
+    if (undoStack.length > MAX_UNDO) undoStack.shift();
     redoStack = [];
   }
 
@@ -262,6 +387,7 @@
     redoStack.push(Engine.getGridCopy());
     Engine.setGridFromCopy(undoStack.pop());
     UI.toast('Undo');
+    autosaveDirty();
   }
 
   function redo() {
@@ -269,24 +395,35 @@
     undoStack.push(Engine.getGridCopy());
     Engine.setGridFromCopy(redoStack.pop());
     UI.toast('Redo');
+    autosaveDirty();
   }
 
-  /* ---- Image Upload (pixelize) ---- */
+  /* ══════════ AUTO-SAVE ══════════ */
+  let saveTimer = null;
+  function autosaveDirty() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => Engine.autosave(), 1000);
+  }
+
+  /* ══════════ PIXELIZE ══════════ */
   function handleImageUpload(file) {
+    UI.showLoading('Loading image...');
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
         Pixelizer.setImage(img);
-        // Show original in canvas area
         const canvas = document.getElementById('pixelCanvas');
         const ctx = canvas.getContext('2d');
         canvas.width = img.naturalWidth;
         canvas.height = img.naturalHeight;
-        canvas.style.width = Math.min(img.naturalWidth, 800) + 'px';
-        canvas.style.height = Math.min(img.naturalHeight, 600) + 'px';
+        const maxW = 800, maxH = 600;
+        const sc = Math.min(1, maxW / img.naturalWidth, maxH / img.naturalHeight);
+        canvas.style.width = Math.round(img.naturalWidth * sc) + 'px';
+        canvas.style.height = Math.round(img.naturalHeight * sc) + 'px';
         ctx.imageSmoothingEnabled = false;
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        UI.hideLoading();
         UI.toast(`Loaded: ${img.naturalWidth} x ${img.naturalHeight}`);
         applyPixelize();
       };
@@ -295,19 +432,19 @@
     reader.readAsDataURL(file);
   }
 
-  /* ---- Pixelize ---- */
   function applyPixelize() {
-    if (!Pixelizer.hasImage()) {
-      UI.toast('Upload an image first');
-      return;
-    }
+    if (!Pixelizer.hasImage()) { UI.toast('Upload an image first'); return; }
     const blockSize = parseInt(document.getElementById('blockSize').value);
     const numColors = parseInt(document.getElementById('paletteColors').value);
     const dither = document.getElementById('ditherToggle').checked;
 
-    pixelizedResult = Pixelizer.pixelize(Pixelizer.getImage(), blockSize, numColors, dither);
-    showPixelizedPreview();
-    UI.toast(`Pixelized: ${pixelizedResult.width} x ${pixelizedResult.height}`);
+    UI.showLoading('Pixelizing...');
+    setTimeout(() => {
+      pixelizedResult = Pixelizer.pixelize(Pixelizer.getImage(), blockSize, numColors, dither);
+      showPixelizedPreview();
+      UI.hideLoading();
+      UI.toast(`Pixelized: ${pixelizedResult.width} x ${pixelizedResult.height}`);
+    }, 50);
   }
 
   function showPixelizedPreview() {
@@ -329,52 +466,129 @@
     UI.toast('Exported!');
   }
 
-  /* ---- Keyboard shortcuts ---- */
+  /* ══════════ KEYBOARD ══════════ */
   function onKeyDown(e) {
-    if (e.target.tagName === 'INPUT') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-    if (e.ctrlKey && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
-    if ((e.ctrlKey && e.key === 'z' && e.shiftKey) || (e.ctrlKey && e.key === 'Z')) { e.preventDefault(); redo(); return; }
-    if (e.ctrlKey && e.key === 'g') { e.preventDefault(); document.getElementById('gridToggle').click(); return; }
-    if (e.ctrlKey && e.key === 'e') {
-      e.preventDefault();
-      if (currentMode === 'draw') {
-        const url = Engine.exportScaledPNG(4);
-        downloadURL(url, 'pixel-art.png');
-        UI.toast('Exported!');
-      } else {
-        exportPixelized();
+    if (e.key === 'Shift') isShiftDown = true;
+
+    // Ctrl shortcuts
+    if (e.ctrlKey || e.metaKey) {
+      switch (e.key.toLowerCase()) {
+        case 'z':
+          e.preventDefault();
+          if (e.shiftKey) redo(); else undo();
+          return;
+        case 'g': e.preventDefault(); document.getElementById('gridToggle').click(); return;
+        case 'e': e.preventDefault(); doExport(); return;
+        case 's': e.preventDefault(); saveProject(); return;
+        case 'o': e.preventDefault(); loadProject(); return;
+        case 'c': e.preventDefault(); UI.toast('Copy not implemented'); return;
+        case 'v': e.preventDefault(); UI.toast('Paste not implemented'); return;
       }
-      return;
     }
 
-    // Draw mode tool shortcuts
-    if (currentMode === 'draw') {
+    // Tool shortcuts (draw mode only)
+    if (currentMode === 'draw' && !e.ctrlKey && !e.metaKey) {
+      if (e.shiftKey) {
+        switch (e.key.toLowerCase()) {
+          case 'v': switchTool('symmetry-v'); e.preventDefault(); return;
+          case 'h': switchTool('symmetry-h'); e.preventDefault(); return;
+          case 'r': switchTool('rect'); e.preventDefault(); return;
+        }
+        return;
+      }
+
       switch (e.key.toLowerCase()) {
-        case 'b': switchTool('pencil'); UI.setToolActive('pencil'); break;
-        case 'g': switchTool('fill'); UI.setToolActive('fill'); break;
-        case 'e': switchTool('eraser'); UI.setToolActive('eraser'); break;
-        case 'i': switchTool('eyedropper'); UI.setToolActive('eyedropper'); break;
-        case 'm': switchTool('mirror'); break;
+        case 'b': switchTool('pencil'); UI.setToolActive('pencil'); e.preventDefault(); break;
+        case 'g': switchTool('fill'); UI.setToolActive('fill'); e.preventDefault(); break;
+        case 'e': switchTool('eraser'); UI.setToolActive('eraser'); e.preventDefault(); break;
+        case 'i': switchTool('eyedropper'); UI.setToolActive('eyedropper'); e.preventDefault(); break;
+        case 'm': switchTool('mirror'); e.preventDefault(); break;
+        case 'l': switchTool('line'); UI.setToolActive('line'); e.preventDefault(); break;
+        case 'r': switchTool('rect'); UI.setToolActive('rect'); e.preventDefault(); break;
+        case 'c': switchTool('circle'); UI.setToolActive('circle'); e.preventDefault(); break;
         case 'f':
           if (!e.ctrlKey) document.getElementById('fullscreenBtn').click();
           break;
-      }
-      if (e.shiftKey) {
-        switch (e.key.toLowerCase()) {
-          case 'v': switchTool('symmetry-v'); break;
-          case 'h': switchTool('symmetry-h'); break;
-        }
+        case '1': document.getElementById('brushSize').value = 1; Tools.setBrushSize(1); updateBrushUI(); break;
+        case '2': document.getElementById('brushSize').value = 2; Tools.setBrushSize(2); updateBrushUI(); break;
+        case '3': document.getElementById('brushSize').value = 4; Tools.setBrushSize(4); updateBrushUI(); break;
+        case 'z': if (!e.ctrlKey) undo(); break;
       }
     }
   }
 
-  /* ---- Helpers ---- */
+  function updateBrushUI() {
+    document.getElementById('brushSizeDisplay').textContent = document.getElementById('brushSize').value;
+  }
+
+  /* ══════════ EXPORT ══════════ */
+  function doExport() {
+    if (currentMode === 'draw') {
+      const url = Engine.exportScaledPNG(4);
+      downloadURL(url, 'pixel-art.png');
+      UI.toast('Exported 4x PNG!');
+    } else {
+      exportPixelized();
+    }
+  }
+
+  /* ══════════ SAVE / LOAD PROJECT ══════════ */
+  function saveProject() {
+    const data = {
+      version: 1,
+      width: Engine.getWidth(),
+      height: Engine.getHeight(),
+      grid: Engine.getGrid(),
+      tool: Tools.getTool(),
+      color: Tools.getColor(),
+    };
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    downloadURL(url, 'pixel-project.json');
+    URL.revokeObjectURL(url);
+    UI.toast('Project saved!');
+  }
+
+  function loadProject() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const data = JSON.parse(ev.target.result);
+          if (!data.grid || !data.width) { UI.toast('Invalid project file'); return; }
+          Engine.resize(data.width, data.height);
+          const grid = Engine.getGrid();
+          for (let y = 0; y < Math.min(data.grid.length, grid.length); y++)
+            for (let x = 0; x < Math.min(data.grid[y].length, grid[y].length); x++)
+              grid[y][x] = data.grid[y][x];
+          Engine.markDirty();
+          Engine.render();
+          document.getElementById('canvasW').value = data.width;
+          document.getElementById('canvasH').value = data.height;
+          updateInfo();
+          UI.toast('Project loaded!');
+        } catch (err) { UI.toast('Error loading project'); }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  }
+
+  /* ══════════ HELPERS ══════════ */
   function downloadURL(url, filename) {
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
   }
 
   function updateInfo() {
@@ -382,6 +596,6 @@
     document.getElementById('zoomDisplay').textContent = `${Engine.getZoom()}%`;
   }
 
-  /* ---- Start ---- */
+  /* ══════════ BOOT ══════════ */
   document.addEventListener('DOMContentLoaded', init);
 })();

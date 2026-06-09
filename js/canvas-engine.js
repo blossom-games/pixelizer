@@ -4,23 +4,24 @@
 
 const Engine = (() => {
   let canvas, ctx;
-  let grid = [];           // 2D array of hex colors
+  let grid = [];
   let width = 32, height = 32;
-  let zoom = 800;          // percent
+  let zoom = 800;
   let gridVisible = true;
   let dirty = true;
+  const STORAGE_KEY = 'pixelstudio_autosave';
 
   /* ---- Init / Resize ---- */
   function init(canvasEl) {
     canvas = canvasEl;
     ctx = canvas.getContext('2d');
-    resize(width, height);
+    // Try auto-save restore
+    if (!tryAutoload()) resize(width, height);
   }
 
   function resize(w, h) {
     width = Math.max(8, Math.min(256, w));
     height = Math.max(8, Math.min(256, h));
-    // Rebuild grid preserving old data
     const old = grid;
     grid = [];
     for (let y = 0; y < height; y++) {
@@ -32,12 +33,6 @@ const Engine = (() => {
     updateCanvasSize();
     dirty = true;
     render();
-  }
-
-  function resizeKeep(w, h, data) {
-    width = w; height = h; grid = data;
-    updateCanvasSize();
-    dirty = true; render();
   }
 
   function updateCanvasSize() {
@@ -57,6 +52,22 @@ const Engine = (() => {
     render();
   }
   function getZoom() { return zoom; }
+  function resetZoom() {
+    const vp = document.getElementById('canvasViewport');
+    const vw = vp.clientWidth - 80, vh = vp.clientHeight - 80;
+    const zx = Math.floor((vw / width) * 100);
+    const zy = Math.floor((vh / height) * 100);
+    setZoom(Math.max(100, Math.min(3200, Math.min(zx, zy))));
+    return zoom;
+  }
+  function zoomAtPoint(z, cx, cy) {
+    const oldScale = zoom / 100;
+    setZoom(z);
+    const newScale = zoom / 100;
+    const vp = document.getElementById('canvasViewport');
+    vp.scrollLeft += (cx - vp.clientWidth / 2) * (newScale / oldScale - 1);
+    vp.scrollTop += (cy - vp.clientHeight / 2) * (newScale / oldScale - 1);
+  }
 
   /* ---- Grid Access ---- */
   function getGrid() { return grid; }
@@ -72,17 +83,14 @@ const Engine = (() => {
     dirty = true;
     return true;
   }
-
   function fillAll(color) {
     for (let y = 0; y < height; y++)
       for (let x = 0; x < width; x++)
         grid[y][x] = color;
     dirty = true;
   }
+  function getGridCopy() { return grid.map(row => [...row]); }
 
-  function getGridCopy() {
-    return grid.map(row => [...row]);
-  }
   function setGridFromCopy(data) {
     grid = data;
     width = grid[0].length;
@@ -92,24 +100,43 @@ const Engine = (() => {
     render();
   }
 
+  /* ---- Auto-save ---- */
+  function tryAutoload() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return false;
+      const data = JSON.parse(raw);
+      if (!data.grid || !data.grid.length) return false;
+      width = data.grid[0].length;
+      height = data.grid.length;
+      grid = data.grid;
+      updateCanvasSize();
+      dirty = true;
+      render();
+      return true;
+    } catch (e) { return false; }
+  }
+
+  function autosave() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ grid }));
+    } catch (e) { /* storage full — ignore */ }
+  }
+
   /* ---- Rendering ---- */
   function render() {
     if (!dirty) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Draw pixels
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         ctx.fillStyle = grid[y][x];
         ctx.fillRect(x, y, 1, 1);
       }
     }
-
-    // Grid lines (when zoomed enough)
-    if (gridVisible && zoom >= 400) {
+    if (gridVisible && zoom >= 200) {
       const scale = zoom / 100;
-      ctx.strokeStyle = 'rgba(0,0,0,0.08)';
-      ctx.lineWidth = 1 / scale;
+      ctx.strokeStyle = 'rgba(0,0,0,0.07)';
+      ctx.lineWidth = Math.max(0.5, 1 / scale);
       for (let x = 1; x < width; x++) {
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
       }
@@ -117,7 +144,6 @@ const Engine = (() => {
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
       }
     }
-
     dirty = false;
   }
 
@@ -128,47 +154,36 @@ const Engine = (() => {
   function canvasToPixel(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
     const scale = zoom / 100;
-    const gx = Math.floor((clientX - rect.left) / scale);
-    const gy = Math.floor((clientY - rect.top) / scale);
-    return { x: Math.max(0, Math.min(width - 1, gx)), y: Math.max(0, Math.min(height - 1, gy)) };
+    return {
+      x: Math.max(0, Math.min(width - 1, Math.floor((clientX - rect.left) / scale))),
+      y: Math.max(0, Math.min(height - 1, Math.floor((clientY - rect.top) / scale))),
+    };
   }
 
   /* ---- Export ---- */
-  function exportPNG() {
-    const offscreen = document.createElement('canvas');
-    offscreen.width = width;
-    offscreen.height = height;
-    const offCtx = offscreen.getContext('2d');
+  function exportScaledPNG(s) {
+    const scale = s || 1;
+    const off = document.createElement('canvas');
+    off.width = width * scale;
+    off.height = height * scale;
+    const octx = off.getContext('2d');
+    octx.imageSmoothingEnabled = false;
     for (let y = 0; y < height; y++)
       for (let x = 0; x < width; x++) {
-        offCtx.fillStyle = grid[y][x];
-        offCtx.fillRect(x, y, 1, 1);
+        octx.fillStyle = grid[y][x];
+        octx.fillRect(x * scale, y * scale, scale, scale);
       }
-    return offscreen.toDataURL('image/png');
-  }
-
-  function exportScaledPNG(scale) {
-    const s = scale || 1;
-    const offscreen = document.createElement('canvas');
-    offscreen.width = width * s;
-    offscreen.height = height * s;
-    const offCtx = offscreen.getContext('2d');
-    offCtx.imageSmoothingEnabled = false;
-    for (let y = 0; y < height; y++)
-      for (let x = 0; x < width; x++) {
-        offCtx.fillStyle = grid[y][x];
-        offCtx.fillRect(x * s, y * s, s, s);
-      }
-    return offscreen.toDataURL('image/png');
+    return off.toDataURL('image/png');
   }
 
   return {
-    init, resize, resizeKeep,
+    init, resize,
     getGrid, getWidth, getHeight, getPixel, setPixel, fillAll,
     getGridCopy, setGridFromCopy,
-    setZoom, getZoom,
+    setZoom, getZoom, resetZoom, zoomAtPoint,
     render, markDirty, toggleGrid,
+    autosave,
     canvasToPixel,
-    exportPNG, exportScaledPNG,
+    exportScaledPNG,
   };
 })();

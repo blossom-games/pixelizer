@@ -1,22 +1,8 @@
 /* ═══════════════════════════════════════════════
-   ui.js — UI Components & Event Wiring
+   ui.js — UI Components
    ═══════════════════════════════════════════════ */
 
 const UI = (() => {
-  let toastTimeout = null;
-
-  /* ---- Toast ---- */
-  function toast(msg) {
-    const container = document.getElementById('toastContainer');
-    const el = document.createElement('div');
-    el.className = 'toast';
-    el.textContent = msg;
-    container.appendChild(el);
-    clearTimeout(toastTimeout);
-    setTimeout(() => { if (el.parentNode) el.remove(); }, 2500);
-  }
-
-  /* ---- Palette ---- */
   const DEFAULT_PALETTE = [
     '#1a1a1a', '#ffffff', '#ef4444', '#f97316',
     '#eab308', '#22c55e', '#06b6d4', '#3b82f6',
@@ -25,7 +11,19 @@ const UI = (() => {
   ];
 
   let paletteSwatches = [];
+  let colorHistory = [];
 
+  /* ---- Toast ---- */
+  function toast(msg, dur) {
+    const container = document.getElementById('toastContainer');
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = msg;
+    container.appendChild(el);
+    setTimeout(() => { if (el.parentNode) el.remove(); }, dur || 2200);
+  }
+
+  /* ---- Palette ---- */
   function renderPalette(container, activeColor, onSelect) {
     container.innerHTML = '';
     paletteSwatches = DEFAULT_PALETTE.map(c => {
@@ -40,29 +38,75 @@ const UI = (() => {
   }
 
   function updatePaletteActive(color) {
-    paletteSwatches.forEach(s => {
-      s.classList.toggle('active', s.dataset.color === color);
+    paletteSwatches.forEach(s => s.classList.toggle('active', s.dataset.color === color));
+  }
+
+  function addColorToHistory(color) {
+    colorHistory = colorHistory.filter(c => c !== color);
+    colorHistory.unshift(color);
+    if (colorHistory.length > 8) colorHistory.pop();
+    renderColorHistory();
+  }
+
+  function renderColorHistory() {
+    const el = document.getElementById('colorHistory');
+    if (!el) return;
+    el.innerHTML = '';
+    colorHistory.forEach(c => {
+      const swatch = document.createElement('div');
+      swatch.className = 'swatch history-swatch';
+      swatch.style.background = c;
+      swatch.dataset.color = c;
+      swatch.addEventListener('click', () => {
+        const hex = document.getElementById('customColor');
+        hex.value = c;
+        hex.dispatchEvent(new Event('input'));
+      });
+      el.appendChild(swatch);
     });
   }
 
-  /* ---- Mode switch ---- */
+  /* ---- Shortcut hint ---- */
+  function showShortcutHint(elem, hint) {
+    const tip = document.createElement('span');
+    tip.className = 'shortcut-hint';
+    tip.textContent = hint;
+    elem.appendChild(tip);
+  }
+
+  /* ---- Loading overlay ---- */
+  function showLoading(msg) {
+    let overlay = document.getElementById('loadingOverlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'loadingOverlay';
+      overlay.innerHTML = '<div class="loading-spinner"></div><div class="loading-text"></div>';
+      document.body.appendChild(overlay);
+    }
+    overlay.querySelector('.loading-text').textContent = msg || 'Processing...';
+    overlay.classList.add('visible');
+  }
+
+  function hideLoading() {
+    const overlay = document.getElementById('loadingOverlay');
+    if (overlay) overlay.classList.remove('visible');
+  }
+
+  /* ---- Init tools ---- */
   function initModeSwitch(onSwitch) {
-    const btns = document.querySelectorAll('.mode-btn');
-    btns.forEach(btn => {
+    document.querySelectorAll('.mode-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        btns.forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         onSwitch(btn.dataset.mode);
       });
     });
   }
 
-  /* ---- Tool buttons ---- */
   function initTools(onToolChange) {
-    const btns = document.querySelectorAll('[data-tool]');
-    btns.forEach(btn => {
+    document.querySelectorAll('[data-tool]').forEach(btn => {
       btn.addEventListener('click', () => {
-        btns.forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('[data-tool]').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         onToolChange(btn.dataset.tool);
       });
@@ -70,22 +114,35 @@ const UI = (() => {
   }
 
   function setToolActive(tool) {
-    document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === tool));
+    document.querySelectorAll('[data-tool]').forEach(b =>
+      b.classList.toggle('active', b.dataset.tool === tool));
   }
 
-  /* ---- Image upload (pixelize mode) ---- */
+  /* ---- Image upload ---- */
   function initImageUpload(onFile) {
     const uploadBtn = document.getElementById('uploadBtn');
     const input = document.getElementById('imageUpload');
+    const area = document.getElementById('canvasViewport');
+
     uploadBtn.addEventListener('click', () => input.click());
-    input.addEventListener('change', (e) => {
-      if (e.target.files.length > 0) onFile(e.target.files[0]);
+    input.addEventListener('change', e => {
+      if (e.target.files.length) onFile(e.target.files[0]);
+    });
+
+    // Drag-and-drop
+    area.addEventListener('dragover', e => { e.preventDefault(); area.classList.add('drag-over'); });
+    area.addEventListener('dragleave', () => area.classList.remove('drag-over'));
+    area.addEventListener('drop', e => {
+      e.preventDefault();
+      area.classList.remove('drag-over');
+      if (e.dataTransfer.files.length) onFile(e.dataTransfer.files[0]);
     });
   }
 
   return {
     toast,
-    renderPalette, updatePaletteActive,
+    renderPalette, updatePaletteActive, addColorToHistory,
+    showLoading, hideLoading,
     initModeSwitch, initTools, setToolActive,
     initImageUpload,
   };

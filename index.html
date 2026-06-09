@@ -20,11 +20,14 @@
       </div>
     </div>
     <div class="header-right">
+      <button class="icon-btn" id="saveBtn" title="Save Project (Ctrl+S)">💾</button>
+      <button class="icon-btn" id="loadBtn" title="Load Project (Ctrl+O)">📂</button>
       <button class="icon-btn" id="fullscreenBtn" title="Fullscreen (F)">⛶</button>
     </div>
   </header>
 
   <main id="main">
+    <!-- SIDEBAR -->
     <aside id="sidebar">
       <div class="sidebar-section" id="drawTools">
         <div class="tool-group">
@@ -35,14 +38,20 @@
         </div>
         <div class="tool-divider"></div>
         <div class="tool-group">
-          <button class="tool-btn" data-tool="symmetry-v" title="Symmetry V (Shift+V)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="2" x2="12" y2="22"/><path d="M5 4h14v4l-7 7-7-7V4z"/></svg></button>
-          <button class="tool-btn" data-tool="symmetry-h" title="Symmetry H (Shift+H)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="2" y1="12" x2="22" y2="12"/><path d="M4 5h4l7 7-7 7H4V5z"/></svg></button>
+          <button class="tool-btn" data-tool="line" title="Line (L)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="20" x2="20" y2="4"/></svg></button>
+          <button class="tool-btn" data-tool="rect" title="Rect (R) — Shift+click for fill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18"/></svg></button>
+          <button class="tool-btn" data-tool="circle" title="Circle (C) — Shift+click for fill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg></button>
+        </div>
+        <div class="tool-divider"></div>
+        <div class="tool-group">
+          <button class="tool-btn" data-tool="symmetry-v" title="Sym V (Shift+V)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="2" x2="12" y2="22"/><path d="M5 4h14v4l-7 7-7-7V4z"/></svg></button>
+          <button class="tool-btn" data-tool="symmetry-h" title="Sym H (Shift+H)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="2" y1="12" x2="22" y2="12"/><path d="M4 5h4l7 7-7 7H4V5z"/></svg></button>
           <button class="tool-btn" data-tool="mirror" title="Mirror (M)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="2" x2="12" y2="22"/><path d="M20 12H12"/><circle cx="16" cy="12" r="4"/></svg></button>
         </div>
         <div class="tool-divider"></div>
         <div class="tool-group">
-          <button class="tool-btn" id="undoBtn" title="Undo (Z)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg></button>
-          <button class="tool-btn" id="redoBtn" title="Redo (Shift+Z)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg></button>
+          <button class="tool-btn" id="undoBtn" title="Undo (Z / Ctrl+Z)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg></button>
+          <button class="tool-btn" id="redoBtn" title="Redo (Ctrl+Shift+Z)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg></button>
         </div>
       </div>
       <div class="sidebar-section hidden" id="pixelizeTools">
@@ -54,6 +63,7 @@
       </div>
     </aside>
 
+    <!-- CANVAS -->
     <section id="canvasArea">
       <div id="canvasViewport">
         <canvas id="pixelCanvas"></canvas>
@@ -63,6 +73,8 @@
           <span id="sizeDisplay">32 x 32</span>
           <span class="info-dot">·</span>
           <span id="toolDisplay">Pencil</span>
+          <span class="info-dot">·</span>
+          <span id="brushSizeDisplay">1</span>
           <span class="info-dot">·</span>
           <span id="zoomDisplay">800%</span>
         </div>
@@ -79,6 +91,7 @@
       </div>
     </section>
 
+    <!-- RIGHT BAR -->
     <aside id="rightBar">
       <div class="sidebar-section">
         <div class="section-label">Color</div>
@@ -87,6 +100,7 @@
           <input type="color" id="customColor" value="#ffffff">
           <input type="text" id="colorHex" value="#ffffff" maxlength="7">
         </div>
+        <div id="colorHistory" class="color-history"></div>
       </div>
       <div class="tool-divider"></div>
       <div class="sidebar-section" id="canvasSizeSection">
@@ -97,6 +111,14 @@
           <div><label class="mini-label">H</label><input type="number" id="canvasH" class="size-input" value="32" min="8" max="256"></div>
         </div>
         <button id="resizeCanvas" class="mini-btn primary" style="width:100%;margin-top:4px;">Resize</button>
+      </div>
+      <div class="tool-divider"></div>
+      <div class="sidebar-section" id="brushSection">
+        <div class="section-label">Brush</div>
+        <div class="brush-control">
+          <input type="range" id="brushSize" min="1" max="10" value="1">
+          <span id="brushSizeDisplayLabel">1</span>
+        </div>
       </div>
       <div class="tool-divider"></div>
       <div class="sidebar-section">
@@ -111,6 +133,7 @@
   </main>
 
   <div id="toastContainer"></div>
+  <div id="dropIndicator">Drop image to pixelize</div>
   <script src="js/canvas-engine.js"></script>
   <script src="js/tools.js"></script>
   <script src="js/pixelizer.js"></script>
